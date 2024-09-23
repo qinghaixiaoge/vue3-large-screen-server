@@ -1,9 +1,27 @@
 const express = require("express")
 const cors = require("cors")
-const { expressjwt } = require("express-jwt")
+const { expressjwt, UnauthorizedError } = require("express-jwt")
 const jwt = require("jsonwebtoken")
+require("dotenv").config()
+const { LoginError,UnknownError } = require("./utils/errors.js")
 const app = express()
 const router = express.Router()
+
+// 不需要认证的接口，错误类型有JsonWebTokenError SyntaxError TokenExpiredError
+// JsonWebTokenError token解析失败/不携带token
+// TokenExpiredError token过期
+// 1111  错误类型：JsonWebTokenError【jwt malformed】
+// 过期  错误类型：TokenExpiredError【jwt expired】
+// 错误几个  错误类型： JsonWebTokenError SyntaxError JsonWebTokenError
+// 不携带 错误类型：JsonWebTokenError【jwt must be provided】
+
+
+// 需要认证的情况下，错误类型均为UnauthorizedError
+// UnauthorizedError token解析失败/不携带token
+// 1111 jwt malformed
+// 过期 jwt expired
+// 错误几个 invalid token / Unexpected token x in JSON at position 0 / invalid signature
+// 不携带 No authorization token was found
 
 // 存放注销用户的token
 const set = new Set()
@@ -25,14 +43,14 @@ app.use((req, res, next) => {
     }
     const token = req.headers.token
     if (token && set.has(token)) {
-        next(new Error("token已注销"))
+        next(new UnauthorizedError(403, { message: "token已注销" }))
         return
     }
     next()
 })
 
 app.use(expressjwt({
-    secret: "qinghaixiaoyu-Doy",
+    secret: process.env.JWT_PASSWORD,
     algorithms: ["HS256"],
     getToken: (req) => {
         if (req.headers.token) {
@@ -43,9 +61,7 @@ app.use(expressjwt({
 }).unless(
     {
         path: [
-            { url: "/login", method: ["POST"] },
-            { url: "/whoami", method: ["GET"] },
-            { url: "/logout", method: ["GET"] }
+            { url: "/login", method: ["POST"] }
         ]
     }
 ))
@@ -54,7 +70,7 @@ router.post("/login", (req, res, next) => {
     const { loginId, loginPwd } = req.body
     if (loginId === "admin" && loginPwd === "123456") {
         // 一天有效期
-        const token = jwt.sign({ loginId }, "qinghaixiaoyu-Doy", { expiresIn: 60 * 60 * 24 })
+        const token = jwt.sign({ loginId }, process.env.JWT_PASSWORD, { expiresIn: 60 * 60 * 24 })
         res.send({
             code: true, msg: null, data: {
                 loginId,
@@ -63,26 +79,30 @@ router.post("/login", (req, res, next) => {
         })
         return
     }
-    next(new Error("账号或密码错误"))
+    next(new LoginError("账号或密码错误"))
 })
 
 router.get("/whoami", (req, res, next) => {
     const token = req.headers.token
-    jwt.verify(token, "qinghaixiaoyu-Doy", (err, decode) => {
+    const decode = jwt.verify(token, process.env.JWT_PASSWORD)
+    res.send({ code: true, msg: null, data: decode })
+
+    /* jwt.verify(token, process.env.JWT_PASSWORD, (err, decode) => {
         if (err) {
             next(err)
         } else {
             res.send({ code: true, msg: null, data: decode })
         }
-    })
+    }) */
 
 })
 // 过期的验证返回值【抛出异常】  错误token的验证返回值【抛出异常】
 router.get("/logout", (req, res, next) => {
     const token = req.headers.token
-    if (token && jwt.verify(token, "qinghaixiaoyu-Doy")) {
+    set.add(token)
+    /* if (token && jwt.verify(token, process.env.JWT_PASSWORD)) {
         set.add(token)
-    }
+    } */
     res.send({ code: true, msg: null, data: "token注销成功" })
 })
 
@@ -3318,28 +3338,41 @@ router.get("/getTrend", (req, res, next) => {
 
 app.use(router)
 
-app.use((req,res,next)=>{
+app.use((req, res, next) => {
     // 处理404
     res.status(404).send({ code: false, msg: "请求地址不存在", data: null })
 })
 
 app.use((err, req, res, next) => {
-    // console.log("错误捕获====>",err.message);
-    if (err.message === "invalid token" || err.message === "jwt must be provided" || err.message === "jwt malformed" || err.message === "No authorization token was found") {
+    /* if (err.message === "invalid token" || err.message === "jwt must be provided" || err.message === "jwt malformed" || err.message === "No authorization token was found") {
         res.status(401).send({ code: false, msg: "未授权，请重新登录", data: null })
         return
     } else if (err.message === "jwt expired" || err.message === "token已注销") {
         res.status(403).send({ code: false, msg: "登录过期，请重新登录", data: null })
         return
+    } */
+    if (err instanceof UnauthorizedError) {
+        if (err.message === "jwt expired" || err.message === "token已注销") {
+            // token过期/拉黑token
+            res.status(403).send({ code: false, msg: "登录过期，请重新登录", data: null })
+        } else {
+            // 无效token/未携带token
+            res.status(401).send({ code: false, msg: "未授权，请重新登录", data: null })
+        }
+        return
+    } else if (err instanceof LoginError) {
+        res.status(err.status).send(err.getResponse())
+    }else{
+        const unknow = new UnknownError()
+        res.status(unknow.status).send(unknow.getResponse())
     }
-    res.status(500).send({ code: false, msg: "服务器错误", data: null })
 })
 
 // 设置定时器，1分钟定时清理黑名单里过期的token
 setInterval(() => {
     set.forEach(token => {
         try {
-            const res = jwt.verify(token, "qinghaixiaoyu-Doy")
+            const res = jwt.verify(token, process.env.JWT_PASSWORD)
             // console.log("注销的token未过期", res);
         } catch (err) {
             set.delete(token)
