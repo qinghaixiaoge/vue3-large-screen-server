@@ -44,7 +44,7 @@ app.use(expressjwt({
     {
         path: [
             { url: "/login", method: ["POST"] },
-            { url: "/whomai", method: ["GET"] },
+            { url: "/whoami", method: ["GET"] },
             { url: "/logout", method: ["GET"] }
         ]
     }
@@ -66,7 +66,7 @@ router.post("/login", (req, res, next) => {
     next(new Error("账号或密码错误"))
 })
 
-router.get("/whomai", (req, res, next) => {
+router.get("/whoami", (req, res, next) => {
     const token = req.headers.token
     jwt.verify(token, "qinghaixiaoyu-Doy", (err, decode) => {
         if (err) {
