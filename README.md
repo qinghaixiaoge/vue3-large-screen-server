@@ -6,7 +6,7 @@ npm i
 
 ## 启动服务
 
-node index.js
+npm start
 
 ## 鉴权
 
